@@ -16,6 +16,11 @@ int main(int argc, char *argv[])
 	// Open PE file as binary
 	std::ifstream pefile;
 	pefile.open(argv[1], std::ios::in | std::ios::binary);
+	if (!pefile.is_open())
+	{
+		std::cout << "Unable to open file" << std::endl;
+		return 0;
+	}
 
 	// Determine size of the PE file
 	pefile.seekg(0, std::ios::end);
@@ -77,4 +82,4 @@ int main(int argc, char *argv[])
 	// All the conditions are satisfied
 	std::cout << "File is a real PE file." << std::endl;
 	return 0;
-}
+} 
