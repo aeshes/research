@@ -1,5 +1,5 @@
 // Program checks is given file a PE-file
-// Usage: checkpe.exe filename
+// Usage: checkpe.exe filename 
 
 #include <iostream>
 #include <fstream>
