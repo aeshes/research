@@ -1,4 +1,4 @@
-// Displays information about the PE file given
+// Displays information about the PE file sections
 
 #include <stdio.h>
 #include <string.h>
