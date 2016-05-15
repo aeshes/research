@@ -1,4 +1,4 @@
-// Displays information about the PE file sections
+// Displays information about the PE file given
 
 #include <stdio.h>
 #include <string.h>
@@ -38,12 +38,12 @@ int main(int argc, char *argv[])
 		return 0;
 	}
 
-	unsigned char *dataPtr = (unsigned char*) MapViewOfFile(hMapping,
+	unsigned char *data_ptr = (unsigned char*) MapViewOfFile(hMapping,
 	                                                       FILE_MAP_READ,
 	                                                       0,
 	                                                       0,
 	                                                       dwFileSize);
-	if (dataPtr == NULL)
+	if (data_ptr == NULL)
 	{
 	 	perror ("MapViewOfFile failed\n");
 	 	CloseHandle(hMapping);
@@ -51,34 +51,41 @@ int main(int argc, char *argv[])
 		return 0;
 	}
 
-	IMAGE_DOS_HEADER dos_header;
-	memcpy (&dos_header, dataPtr, sizeof (IMAGE_DOS_HEADER));
+	PIMAGE_DOS_HEADER dos_header = (PIMAGE_DOS_HEADER) data_ptr;
 
-	IMAGE_NT_HEADERS nt_headers;
-	memcpy (&nt_headers, dataPtr + dos_header.e_lfanew, sizeof (IMAGE_NT_HEADERS));
-
-	if (nt_headers.Signature != 'EP')
+	if (dos_header->e_magic != 'ZM')
 	{
-		printf ("Incorrect PE signature\n");
+
+		perror ("Incorrect DOS signature\n");
 	 	CloseHandle(hMapping);
 		CloseHandle(hFile);
 		return 0;
 	}
 
-	PIMAGE_SECTION_HEADER section_header = (PIMAGE_SECTION_HEADER) (dataPtr +
-										   dos_header.e_lfanew +
+	PIMAGE_NT_HEADERS nt_headers = (PIMAGE_NT_HEADERS) (data_ptr + dos_header->e_lfanew);
+
+	if (nt_headers->Signature != 'EP')
+	{
+		perror ("Incorrect PE signature\n");
+	 	CloseHandle(hMapping);
+		CloseHandle(hFile);
+		return 0;
+	}
+
+	PIMAGE_SECTION_HEADER section_header = (PIMAGE_SECTION_HEADER) (data_ptr +
+										   dos_header->e_lfanew +
 										   offsetof(IMAGE_NT_HEADERS, OptionalHeader) +
-										   nt_headers.FileHeader.SizeOfOptionalHeader);
+										   nt_headers->FileHeader.SizeOfOptionalHeader);
 	int i;
-	for (i = 0; i < nt_headers.FileHeader.NumberOfSections; i++, section_header++)
+	for (i = 0; i < nt_headers->FileHeader.NumberOfSections; i++, section_header++)
 	{
 		char name[9] = {0};
 		memcpy (name, section_header->Name, 8);
 		printf ("Section name: %s\n=======================\n", name);
-		printf ("Virtual size : %x\n", section_header->Misc.VirtualSize);
-		printf ("Raw size: %x\n", section_header->SizeOfRawData);
-		printf ("Virtual address: %x\n", section_header->VirtualAddress);
-		printf ("Raw address: %x\n", section_header->PointerToRawData);
+		printf ("Virtual size : 0x%x\n", section_header->Misc.VirtualSize);
+		printf ("Raw size: 0x%x\n", section_header->SizeOfRawData);
+		printf ("Virtual address: 0x%x\n", section_header->VirtualAddress);
+		printf ("Raw address: 0x%x\n", section_header->PointerToRawData);
 		
 		printf ("Characteristics: ");
 		if (section_header->Characteristics & IMAGE_SCN_MEM_READ)
@@ -94,7 +101,7 @@ int main(int argc, char *argv[])
 		printf ("\n\n");
 	}
 
-	UnmapViewOfFile (dataPtr);
+	UnmapViewOfFile (data_ptr);
 	CloseHandle (hMapping);
 	CloseHandle (hFile);
 	return 0;
