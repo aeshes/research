@@ -15,7 +15,7 @@ int main(int argc, char *argv[])
 
 	TCHAR *filename = argv[1];
 	HANDLE hFile = CreateFile (filename, FILE_ALL_ACCESS, 0, 0,
-							   OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+				   OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
 	if (hFile == INVALID_HANDLE_VALUE)
 	{
 		perror ("Cant open file given\n");
@@ -73,9 +73,9 @@ int main(int argc, char *argv[])
 	}
 
 	PIMAGE_SECTION_HEADER section_header = (PIMAGE_SECTION_HEADER) (data_ptr +
-										   dos_header->e_lfanew +
-										   offsetof(IMAGE_NT_HEADERS, OptionalHeader) +
-										   nt_headers->FileHeader.SizeOfOptionalHeader);
+									dos_header->e_lfanew +
+									offsetof(IMAGE_NT_HEADERS, OptionalHeader) +
+									nt_headers->FileHeader.SizeOfOptionalHeader);
 	int i;
 	for (i = 0; i < nt_headers->FileHeader.NumberOfSections; i++, section_header++)
 	{
