@@ -4,9 +4,9 @@
 #include <stdint.h>
 
 #define XTEA_GENERATE_LETTERS	58
-#define XTEA_STD_KEYSIZE		16
+#define XTEA_STD_KEYSIZE	16
 #define XTEA_BLOCK_SIZE_BYTES	8
-#define BLOCKS_TO_ENCRYPT		4
+#define BLOCKS_TO_ENCRYPT	4
 
 typedef struct XTEA_DATA
 {
