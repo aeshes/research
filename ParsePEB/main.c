@@ -49,7 +49,7 @@ __declspec(naked) DWORD WINAPI FindGetProcAddr(DWORD kernel32)
 			mov edi, [esi + ecx * 4]		; edi = pointer (offset)
 			add edi, ebx				; edi = GetProcAddress
 		mov eax, edi
-		ret
+		ret 4
 	}
 }
 
@@ -57,6 +57,7 @@ int main(int argc, char *argv[])
 {
 	DWORD kernel32 = GetKernel32();
 	WINAPI (*f)(HMODULE, LPCSTR) = (void *)FindGetProcAddr(kernel32);
+	
 	FARPROC WINAPI win_exec = (FARPROC)f((void *)kernel32, "WinExec");
 
 	win_exec("calc.exe", SW_SHOW);
