@@ -1,5 +1,7 @@
 #include "hash.h"
 
+unsigned int hash;	/* for little optimization of repeated hash calculations */
+
 char *strdup(const char *s)
 {
 	char *p = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, lstrlen(s) + 1);
@@ -13,13 +15,13 @@ char *strdup(const char *s)
 
 int hashfunc(char *key)
 {
-	unsigned int hash = 0;
+	unsigned int i = 0;
 	while (*key)
 	{
-		hash = (hash << 1) | (hash >> 15);	/* ROL */
-		hash ^= *key++;
+		i = (i << 1) | (i >> 15);	/* ROL */
+		i ^= *key++;
 	}
-	hash = hash % HASHSIZE;
+	hash = i % HASHSIZE;
 	return hash;
 }
 
@@ -41,8 +43,8 @@ void insert(char *key)
 	{
 		if (!(p = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(struct cell)))) return;
 		SETKEY(p->ext, key);
-		p->next = hashtable[hashfunc(key)];
-		hashtable[hashfunc(key)] = p;
+		p->next = hashtable[hash];	/* [global] hash is already calculated in find() */
+		hashtable[hash] = p;
 	}
 }
 
