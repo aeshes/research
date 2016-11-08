@@ -4,35 +4,6 @@
 
 #pragma comment(lib, "user32.lib")
 
-void RunNewProcess(char *szExePath)
-{
-	PROCESS_INFORMATION pi;
-	STARTUPINFO si;
-	HANDLE hCurrentProcess = NULL;
-	char szCmdLine[MAX_PATH];
-
-	DuplicateHandle(GetCurrentProcess(),
-		GetCurrentProcess(),
-		GetCurrentProcess(),
-		&hCurrentProcess,
-		0,
-		TRUE,
-		DUPLICATE_SAME_ACCESS);
-
-	ZeroMemory(&si, sizeof(STARTUPINFO));
-	si.cb = sizeof(STARTUPINFO);
-	wsprintf(szCmdLine, "%s %d", szExePath, (int)hCurrentProcess);
-	CreateProcess(NULL,
-		szCmdLine,
-		NULL,
-		NULL,
-		TRUE,
-		CREATE_NEW_CONSOLE,
-		NULL,
-		NULL,
-		&si,
-		&pi);
-}
 
 void thread(void)
 {
@@ -45,23 +16,87 @@ void thread(void)
 	}
 }
 
+void TrackChildProcess(LPVOID param)
+{
+	while(1)
+	{
+		STARTUPINFO si;
+		PROCESS_INFORMATION pi;
+		CHAR szExePath[MAX_PATH];
+		CHAR szCmdLine[MAX_PATH];
+		DWORD pid = GetCurrentProcessId();
+
+		GetModuleFileName(GetModuleHandle(NULL), szExePath, MAX_PATH);
+		wsprintf(szCmdLine,"%s %d\0", szExePath, pid);
+
+		ZeroMemory(&si, sizeof(STARTUPINFO));
+		si.cb = sizeof(STARTUPINFO);
+		CreateProcess(NULL,
+			szCmdLine,
+			NULL,
+			NULL,
+			FALSE,
+			CREATE_NEW_CONSOLE,
+			NULL,
+			NULL,
+			&si,
+			&pi);
+
+		WaitForSingleObject(pi.hProcess, INFINITE);
+	}
+}
+
+void TrackParentProcess(LPVOID hParentProcess)
+{
+	STARTUPINFO si;
+	PROCESS_INFORMATION pi;
+	CHAR szExePath[MAX_PATH];
+
+	WaitForSingleObject((HANDLE)hParentProcess, INFINITE);
+	
+	GetModuleFileName(GetModuleHandle(NULL), szExePath, MAX_PATH);
+
+	ZeroMemory(&si, sizeof(STARTUPINFO));
+	si.cb = sizeof(STARTUPINFO);
+	CreateProcess(NULL,
+		szExePath,
+		NULL,
+		NULL,
+		FALSE,
+		CREATE_NEW_CONSOLE,
+		NULL,
+		NULL,
+		&si,
+		&pi);
+	ExitProcess(0);
+}
+
 int main(int argc, char *argv[])
 {
 	HANDLE hParentProcess = NULL;
-	HANDLE hThread = NULL;
-	char szExePath[MAX_PATH];
+	DWORD  ProcessID 	  = 0;
 
-	GetModuleFileName(NULL, szExePath, MAX_PATH);
+	if (argv[1] != NULL)
+		ProcessID = atoi(argv[1]);
 
-	if (argv[1] == NULL)	// First run
+	if (ProcessID == 0)
 	{
-		//RunNewProcess(szExePath);
+		CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)TrackChildProcess, NULL, 0, NULL);
 	}
-	else hParentProcess = (HANDLE) atoi(argv[1]);
+	else
+	{
+		hParentProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, ProcessID);
+		if (hParentProcess)
+		{
+			CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)TrackParentProcess, (LPVOID)hParentProcess, 0, NULL);
+			while (1)
+			{
+				Sleep(500);
+			}
+		}
+	}
 
-	WaitForSingleObject(hParentProcess, INFINITE);
-	RunNewProcess(szExePath);
-
-	hThread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)thread, NULL, 0, NULL);
-	WaitForSingleObject(hThread, INFINITE);
+	// Main logic goes here...
+	CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)thread, NULL, 0, NULL);
+	while(1) Sleep(500);
 }
