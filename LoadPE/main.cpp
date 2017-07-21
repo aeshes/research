@@ -52,13 +52,13 @@ typedef struct _LoadPE_CONTEXT
 	/* Ptrs to headers */
     PIMAGE_DOS_HEADER      dos_hdr_ptr;
     PIMAGE_NT_HEADERS      pe_hdr_ptr;
-	PIMAGE_SECTION_HEADER  sections;
+    PIMAGE_SECTION_HEADER  sections;
     PIMAGE_BASE_RELOCATION reloc;
 
 	/* Constants */
     DWORD sections_count;
-	DWORD prefer_base_address;
-	DWORD reloc_dir_size;
+    DWORD prefer_base_address;
+    DWORD reloc_dir_size;
 
 	/*Real base address at which image is loaded */
     PBYTE real_base_addr;
@@ -66,8 +66,8 @@ typedef struct _LoadPE_CONTEXT
 
 typedef struct _IMAGE_FIXUP_ENTRY
 {
-	WORD Offset : 12;
-	WORD Type : 4;
+    WORD Offset : 12;
+    WORD Type   : 4;
 } IMAGE_FIXUP_ENTRY, *PIMAGE_FIXUP_ENTRY;
 
 void* LoadPE_AllocateMemory(LoadPE_CONTEXT* ctx, PBYTE disk_image)
@@ -149,6 +149,12 @@ void LoadPE_SetSectionMemoryProtection(LoadPE_CONTEXT* ctx)
 	}
 }
 
+inline void LoadPE_PatchAddress(const LoadPE_CONTEXT* ctx, PIMAGE_BASE_RELOCATION Reloc, PIMAGE_FIXUP_ENTRY Fixup, DWORD Delta)
+{
+	DWORD_PTR* Address = (DWORD_PTR *)(ctx->real_base_addr + Reloc->VirtualAddress + Fixup->Offset);
+	*Address += Delta;
+}
+
 void LoadPE_PerformRelocation(const LoadPE_CONTEXT* ctx)
 {
 	DWORD Delta = (DWORD)ctx->real_base_addr - ctx->prefer_base_address;
@@ -163,10 +169,9 @@ void LoadPE_PerformRelocation(const LoadPE_CONTEXT* ctx)
 		const PIMAGE_FIXUP_ENTRY Fixup = PIMAGE_FIXUP_ENTRY((DWORD(Reloc) + sizeof(IMAGE_BASE_RELOCATION)));
 		for (int i = 0; i < FixupCount; ++i)
 		{
-			if (Fixup[i].Type)
+			if (Fixup[i].Type == IMAGE_REL_BASED_HIGHLOW)
 			{
-				DWORD_PTR* Address = (DWORD_PTR *)(ctx->real_base_addr + Reloc->VirtualAddress + Fixup[i].Offset);
-				*Address += Delta;
+				LoadPE_PatchAddress(ctx, Reloc, &Fixup[i], Delta);
 			}
 		}
 		Offset += Reloc->SizeOfBlock;
@@ -174,14 +179,14 @@ void LoadPE_PerformRelocation(const LoadPE_CONTEXT* ctx)
 	}
 }
 
-PIMAGE_THUNK_DATA GetOriginalFirstThunk(void* image_base, PIMAGE_IMPORT_DESCRIPTOR import_desk)
+inline PIMAGE_THUNK_DATA GetOriginalFirstThunk(PBYTE image_base, PIMAGE_IMPORT_DESCRIPTOR import_desk)
 {
-	return PIMAGE_THUNK_DATA((DWORD)image_base + import_desk->OriginalFirstThunk);
+	return PIMAGE_THUNK_DATA(image_base + import_desk->OriginalFirstThunk);
 }
 
-PIMAGE_THUNK_DATA GetFirstThunk(void* image_base, PIMAGE_IMPORT_DESCRIPTOR import_desk)
+inline PIMAGE_THUNK_DATA GetFirstThunk(PBYTE image_base, PIMAGE_IMPORT_DESCRIPTOR import_desk)
 {
-	return PIMAGE_THUNK_DATA((DWORD)image_base + import_desk->FirstThunk);
+	return PIMAGE_THUNK_DATA(image_base + import_desk->FirstThunk);
 }
 
 void LoadPE_ResolveImport(LoadPE_CONTEXT* ctx)
@@ -194,18 +199,31 @@ void LoadPE_ResolveImport(LoadPE_CONTEXT* ctx)
         const char* dll_name = (char*)(ctx->real_base_addr + import_desc->Name);
         std::cout << dll_name << std::endl;
 
-		HMODULE hModule = LoadLibraryA(dll_name);
-
-        PIMAGE_THUNK_DATA ThunkData = GetOriginalFirstThunk(ctx->real_base_addr, import_desc);
-		for (PIMAGE_THUNK_DATA iat = GetFirstThunk(ctx->real_base_addr, import_desc); ThunkData->u1.Function; ++ThunkData, ++iat)
+		HMODULE hModule = GetModuleHandleA(dll_name);
+		if (!hModule)
 		{
-			PIMAGE_IMPORT_BY_NAME symbol = PIMAGE_IMPORT_BY_NAME(ctx->real_base_addr + ThunkData->u1.Function);
-			std::cout << (char*)symbol->Name << std::endl;
+			hModule = LoadLibraryA(dll_name);
+		}
+		if (!hModule) return;
 
-			FARPROC function = GetProcAddress(hModule, symbol->Name);
-			std::cout << std::hex << DWORD(function) << std::endl;
+        PIMAGE_THUNK_DATA LookupTable = GetOriginalFirstThunk(ctx->real_base_addr, import_desc);
+		for (PIMAGE_THUNK_DATA iat = GetFirstThunk(ctx->real_base_addr, import_desc); LookupTable->u1.Function; ++LookupTable, ++iat)
+		{
+			ULONG function = 0;
+			PIMAGE_IMPORT_BY_NAME symbol = PIMAGE_IMPORT_BY_NAME(ctx->real_base_addr + LookupTable->u1.AddressOfData);
+			if (symbol->Name[0])
+			{
+				std::cout << (char*)symbol->Name << std::endl;
+				function = (ULONG)GetProcAddress(hModule, symbol->Name);
+			}
+			else
+			{
+				function = (ULONG)GetProcAddress(hModule, (char*)symbol->Hint);
+			}
 
-			*(DWORD_PTR *)(ctx->real_base_addr + iat->u1.Function) = DWORD_PTR(function);
+			std::cout << std::hex << function << std::endl;
+
+			*(ULONG *)iat = function;
 		}
     }
 }
