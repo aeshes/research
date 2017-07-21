@@ -9,20 +9,8 @@
 #pragma warning ( disable : 4146 )
 
 
-template <typename TInt>
-TInt ALIGN_DOWN(TInt x, TInt align)
-{
-	return (x & ~(align - 1));
-}
-
-template <typename TInt>
-TInt ALIGN_UP(TInt x, TInt align)
-{
-	return (x & (align - 1)) ? ALIGN_DOWN(x, align) + align : x;
-}
-
 template <typename TInt, typename TAlign = std::size_t>
-TInt ALIGN_UP2(TInt x, TAlign align)
+TInt ALIGN_UP(TInt x, TAlign align)
 {
 	return (x + (align - 1)) & -align;
 }
@@ -70,10 +58,17 @@ typedef struct _LoadPE_CONTEXT
 	/* Constants */
     DWORD sections_count;
 	DWORD prefer_base_address;
+	DWORD reloc_dir_size;
 
 	/*Real base address at which image is loaded */
     PBYTE real_base_addr;
 } LoadPE_CONTEXT;
+
+typedef struct _IMAGE_FIXUP_ENTRY
+{
+	WORD Offset : 12;
+	WORD Type : 4;
+} IMAGE_FIXUP_ENTRY, *PIMAGE_FIXUP_ENTRY;
 
 void* LoadPE_AllocateMemory(LoadPE_CONTEXT* ctx, PBYTE disk_image)
 {
@@ -104,10 +99,12 @@ void LoadPE_LoadHeaders(LoadPE_CONTEXT* ctx, PBYTE disk_image)
 	if (relocs_rva)
 	{
 		ctx->reloc = PIMAGE_BASE_RELOCATION(ctx->real_base_addr + relocs_rva);
+		ctx->reloc_dir_size = ctx->pe_hdr_ptr->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].Size;
 	}
 	else
 	{
 		ctx->reloc = nullptr;
+		ctx->reloc_dir_size = 0;
 	}
 }
 
@@ -154,44 +151,26 @@ void LoadPE_SetSectionMemoryProtection(LoadPE_CONTEXT* ctx)
 
 void LoadPE_PerformRelocation(const LoadPE_CONTEXT* ctx)
 {
-	PBYTE pReloc = (PBYTE)ctx->reloc;
-	std::cout << "delta: " << std::hex << ((DWORD)ctx->real_base_addr - ctx->prefer_base_address) << std::endl;
+	DWORD Delta = (DWORD)ctx->real_base_addr - ctx->prefer_base_address;
 
-	while (true)
+	PIMAGE_BASE_RELOCATION Reloc = ctx->reloc;
+	const DWORD RelocDirSize = ctx->reloc_dir_size;
+	DWORD Offset = 0;
+
+	while (Offset != RelocDirSize)
 	{
-		PBYTE pageRVA = (PBYTE)(*(DWORD *)pReloc);
-		DWORD blockSize = *(DWORD *)(pReloc + 4);
-
-		if (!blockSize) break;
-
-		printf("FIXUP BLOCK - pageRVA: %06Xh, size %06d bytes\n"\
-			"-------------------------------------------------\n",
-			pageRVA, blockSize);
-
-		for (int i = 8; i < blockSize; i += 2)
+		const DWORD FixupCount = (Reloc->SizeOfBlock - sizeof(IMAGE_BASE_RELOCATION)) / sizeof(WORD);
+		const PIMAGE_FIXUP_ENTRY Fixup = PIMAGE_FIXUP_ENTRY((DWORD(Reloc) + sizeof(IMAGE_BASE_RELOCATION)));
+		for (int i = 0; i < FixupCount; ++i)
 		{
-			DWORD typeX = (*(WORD *)(pReloc + i)) >> 12;
-			DWORD offsetX = (*(WORD *)(pReloc + i)) & ((1 << 12) - 1);
-
-			switch (typeX)
+			if (Fixup[i].Type)
 			{
-			case 0:
-				std::cout << "\tIMAGE_REL_BASED_ABSOLUTE" << std::endl;
-				break;
-			case 3:
-				std::cout << "\tIMAGE_REL_BASED_HIGHLOW "
-					<< std::hex << (offsetX + ctx->prefer_base_address)
-					<< "------->"
-					<< std::hex << (offsetX + (DWORD)ctx->real_base_addr)
-					<< std::endl;
-				break;
-			default:
-				std::cout << "type " << std::hex << typeX << " not supported" << std::endl;
-				break;
+				DWORD_PTR* Address = (DWORD_PTR *)(ctx->real_base_addr + Reloc->VirtualAddress + Fixup[i].Offset);
+				*Address += Delta;
 			}
 		}
-		std::cout << std::endl;
-		pReloc += blockSize;
+		Offset += Reloc->SizeOfBlock;
+		Reloc = PIMAGE_BASE_RELOCATION(DWORD(Reloc) + Reloc->SizeOfBlock);
 	}
 }
 
@@ -253,12 +232,7 @@ void LoadPE(PBYTE disk_image)
 
 int main()
 {
-	std::cout << ALIGN_UP(17, 16) << std::endl;
-	std::cout << ALIGN_UP2(1, 16) << std::endl;
 
-	std::size_t x = 17;
-	std::cout << ALIGN_UP2(x, (std::size_t)16) << std::endl;
-
-	PBYTE disk_image = LoadFromDisk("Thread.exe");
+	PBYTE disk_image = LoadFromDisk("main.exe");
 	LoadPE(disk_image);
 }
