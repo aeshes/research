@@ -77,8 +77,9 @@ void* LoadPE_AllocateMemory(LoadPE_CONTEXT* ctx, PBYTE disk_image)
 
 	void* mem = VirtualAlloc(nullptr /*(void*)NtHeaders->OptionalHeader.ImageBase*/,
                              NtHeaders->OptionalHeader.SizeOfImage,
-                             MEM_COMMIT,
+                             MEM_RESERVE | MEM_COMMIT,
                              PAGE_READWRITE);
+	std::cout << GetLastError();
 	ctx->pbRealImageBase = PBYTE(mem);
 	return mem;
 }
@@ -214,12 +215,45 @@ void LoadPE_PerformRelocation(const LoadPE_CONTEXT* ctx)
 
 inline PIMAGE_THUNK_DATA GetOriginalFirstThunk(PBYTE image_base, PIMAGE_IMPORT_DESCRIPTOR import_desk)
 {
-	return PIMAGE_THUNK_DATA(image_base + import_desk->OriginalFirstThunk);
+	if (import_desk->OriginalFirstThunk == 0)
+		return nullptr;
+	else
+		return PIMAGE_THUNK_DATA(image_base + import_desk->OriginalFirstThunk);
 }
 
 inline PIMAGE_THUNK_DATA GetFirstThunk(PBYTE image_base, PIMAGE_IMPORT_DESCRIPTOR import_desk)
 {
 	return PIMAGE_THUNK_DATA(image_base + import_desk->FirstThunk);
+}
+
+void LoadPE_WalkImportDescriptor(LoadPE_CONTEXT* ctx, PIMAGE_IMPORT_DESCRIPTOR pImportDesc)
+{
+	const char* pszDllName = (char *)(ctx->pbRealImageBase + pImportDesc->Name);
+
+	HMODULE hModule = GetModuleHandleA(pszDllName);
+	if (!hModule)
+	{
+		hModule = LoadLibraryA(pszDllName);
+	}
+	if (!hModule) return;
+
+	PIMAGE_THUNK_DATA LookupFirstThunkEntry = GetOriginalFirstThunk(ctx->pbRealImageBase, pImportDesc);
+	PIMAGE_THUNK_DATA IATFirstThunkEntry = GetFirstThunk(ctx->pbRealImageBase, pImportDesc);
+	for (; LookupFirstThunkEntry->u1.AddressOfData; ++LookupFirstThunkEntry, ++IATFirstThunkEntry)
+	{
+		ULONG function = 0;
+		PIMAGE_IMPORT_BY_NAME symbol = PIMAGE_IMPORT_BY_NAME(ctx->pbRealImageBase + LookupFirstThunkEntry->u1.AddressOfData);
+		if (IMAGE_SNAP_BY_ORDINAL32(LookupFirstThunkEntry->u1.Ordinal))
+		{
+			ULONGLONG Ordinal = IMAGE_ORDINAL32(LookupFirstThunkEntry->u1.Ordinal);
+			function = (ULONG)GetProcAddress(hModule, (char*)symbol->Hint);
+		}
+		else
+		{
+			function = (ULONG)GetProcAddress(hModule, symbol->Name);
+		}
+		*(ULONG *)IATFirstThunkEntry = function;
+	}
 }
 
 void LoadPE_ResolveImport(LoadPE_CONTEXT* ctx)
@@ -229,31 +263,7 @@ void LoadPE_ResolveImport(LoadPE_CONTEXT* ctx)
                                     + ctx->pPeHdr->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress);
     for (; import_desc->Characteristics; ++import_desc)
     {
-        const char* dll_name = (char*)(ctx->pbRealImageBase + import_desc->Name);
-
-		HMODULE hModule = GetModuleHandleA(dll_name);
-		if (!hModule)
-		{
-			hModule = LoadLibraryA(dll_name);
-		}
-		if (!hModule) return;
-
-        PIMAGE_THUNK_DATA LookupTable = GetOriginalFirstThunk(ctx->pbRealImageBase, import_desc);
-		for (PIMAGE_THUNK_DATA iat = GetFirstThunk(ctx->pbRealImageBase, import_desc); LookupTable->u1.Function; ++LookupTable, ++iat)
-		{
-			ULONG function = 0;
-			PIMAGE_IMPORT_BY_NAME symbol = PIMAGE_IMPORT_BY_NAME(ctx->pbRealImageBase + LookupTable->u1.AddressOfData);
-			if (symbol->Name[0])
-			{
-				function = (ULONG)GetProcAddress(hModule, symbol->Name);
-			}
-			else
-			{
-				function = (ULONG)GetProcAddress(hModule, (char*)symbol->Hint);
-			}
-
-			*(ULONG *)iat = function;
-		}
+		LoadPE_WalkImportDescriptor(ctx, import_desc);
     }
 }
 
