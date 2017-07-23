@@ -2,9 +2,9 @@
 #include <memory>
 #include <algorithm>
 
-#include <cstdio>
-
 #include <windows.h>
+
+#include "def.h"
 
 #pragma warning ( disable : 4146 )
 
@@ -70,16 +70,30 @@ typedef struct _IMAGE_FIXUP_ENTRY
     WORD Type   : 4;
 } IMAGE_FIXUP_ENTRY, *PIMAGE_FIXUP_ENTRY;
 
+
+__declspec(naked) PPEB GetPEB()
+{
+	__asm
+	{
+		mov eax, fs:[0x30]
+		ret
+	}
+}
+
 void* LoadPE_AllocateMemory(LoadPE_CONTEXT* ctx, PBYTE disk_image)
 {
 	PIMAGE_DOS_HEADER DosHeader = (PIMAGE_DOS_HEADER)(disk_image);
 	PIMAGE_NT_HEADERS NtHeaders = (PIMAGE_NT_HEADERS)(disk_image + DosHeader->e_lfanew);
 
-	void* mem = VirtualAlloc(nullptr /*(void*)NtHeaders->OptionalHeader.ImageBase*/,
-                             NtHeaders->OptionalHeader.SizeOfImage,
+	std::size_t ImageBase   = NtHeaders->OptionalHeader.ImageBase;
+	std::size_t SizeOfImage = NtHeaders->OptionalHeader.SizeOfImage;
+	UnmapViewOfFile((void *)ImageBase);
+	VirtualFree((void *)ImageBase, SizeOfImage, MEM_DECOMMIT);
+	VirtualFree((void *)ImageBase, SizeOfImage, MEM_RELEASE);
+	void* mem = VirtualAlloc((void*)ImageBase,
+                             SizeOfImage,
                              MEM_RESERVE | MEM_COMMIT,
                              PAGE_READWRITE);
-	std::cout << GetLastError();
 	ctx->pbRealImageBase = PBYTE(mem);
 	return mem;
 }
@@ -241,18 +255,18 @@ void LoadPE_WalkImportDescriptor(LoadPE_CONTEXT* ctx, PIMAGE_IMPORT_DESCRIPTOR p
 	PIMAGE_THUNK_DATA IATFirstThunkEntry = GetFirstThunk(ctx->pbRealImageBase, pImportDesc);
 	for (; LookupFirstThunkEntry->u1.AddressOfData; ++LookupFirstThunkEntry, ++IATFirstThunkEntry)
 	{
-		ULONG function = 0;
+		ULONG Function = 0;
 		PIMAGE_IMPORT_BY_NAME symbol = PIMAGE_IMPORT_BY_NAME(ctx->pbRealImageBase + LookupFirstThunkEntry->u1.AddressOfData);
 		if (IMAGE_SNAP_BY_ORDINAL32(LookupFirstThunkEntry->u1.Ordinal))
 		{
 			ULONGLONG Ordinal = IMAGE_ORDINAL32(LookupFirstThunkEntry->u1.Ordinal);
-			function = (ULONG)GetProcAddress(hModule, (char*)symbol->Hint);
+			Function = (ULONG)GetProcAddress(hModule, (char*)symbol->Hint);
 		}
 		else
 		{
-			function = (ULONG)GetProcAddress(hModule, symbol->Name);
+			Function = (ULONG)GetProcAddress(hModule, symbol->Name);
 		}
-		*(ULONG *)IATFirstThunkEntry = function;
+		*(ULONG *)IATFirstThunkEntry = Function;
 	}
 }
 
@@ -267,11 +281,24 @@ void LoadPE_ResolveImport(LoadPE_CONTEXT* ctx)
     }
 }
 
+void LoadPE_FixPEB(LoadPE_CONTEXT* ctx)
+{
+	PPEB Peb = GetPEB();
+	Peb->ImageBaseAddress = ctx->pbRealImageBase;
+
+	PLDR_DATA_TABLE_ENTRY pLdrEntry = PLDR_DATA_TABLE_ENTRY(Peb->Ldr->InLoadOrderModuleList.Flink);
+	pLdrEntry->DllBase = ctx->pbRealImageBase;
+	pLdrEntry = PLDR_DATA_TABLE_ENTRY(Peb->Ldr->InMemoryOrderModuleList.Flink);
+	pLdrEntry->DllBase = ctx->pbRealImageBase;
+	pLdrEntry = PLDR_DATA_TABLE_ENTRY(Peb->Ldr->InInitializationOrderModuleList.Flink);
+	pLdrEntry->DllBase = ctx->pbRealImageBase;
+}
+
 void LoadPE_CallEntryPoint(LoadPE_CONTEXT* ctx)
 {
     DWORD EntryPoint = (DWORD)ctx->pbRealImageBase
                      + ctx->pPeHdr->OptionalHeader.AddressOfEntryPoint;
-	__asm jmp[EntryPoint];
+	__asm call EntryPoint;
 }
 
 void LoadPE(PBYTE disk_image)
@@ -284,13 +311,12 @@ void LoadPE(PBYTE disk_image)
 	LoadPE_PerformRelocation(&ctx);
 	LoadPE_ResolveImport(&ctx);
 	LoadPE_SetSectionMemoryProtection(&ctx);
+	LoadPE_FixPEB(&ctx);
 	LoadPE_CallEntryPoint(&ctx);
 }
 
 int main()
 {
-
-
-	PBYTE disk_image = LoadFromDisk("main.exe");
+	PBYTE disk_image = LoadFromDisk("calc.exe");
 	LoadPE(disk_image);
 }
